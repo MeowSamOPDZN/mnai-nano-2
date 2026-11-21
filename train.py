@@ -52,7 +52,7 @@ def parse_args():
     p.add_argument("--weight-decay", type=float, default=0.1)
     p.add_argument("--optim", default="bnb8bit", choices=["bnb8bit", "adamw"])
     p.add_argument("--seed", type=int, default=1337)
-    p.add_argument("--ckpt-every", type=int, default=500)
+    p.add_argument("--ckpt-every", type=int, default=100)
     p.add_argument("--log-every", type=int, default=10)
     p.add_argument("--smoke", action="store_true")
     return p.parse_args()
@@ -67,8 +67,10 @@ def token_stream(tok, smoke=False):
         return
     from datasets import load_dataset
 
+    print("loading FineWeb-Edu stream, first download can take a few minutes...", flush=True)
     ds = load_dataset("HuggingFaceFW/fineweb-edu", "sample-10BT",
                       split="train", streaming=True)
+    print("stream ready, reading first docs...", flush=True)
     here = os.path.dirname(os.path.abspath(__file__))
     ident = ""
     ident_path = os.path.join(here, "identity_data.txt")
@@ -79,6 +81,8 @@ def token_stream(tok, smoke=False):
     for row in ds:
         text = row["text"]
         n_docs += 1
+        if n_docs == 1:
+            print(f"first doc loaded, {len(text):,} chars, tokenizing...", flush=True)
         # a pinch of identity in the mix, about one doc in fifty
         if n_docs % 50 == 0 and ident:
             text = text + "\n" + ident
@@ -90,6 +94,7 @@ def batch_stream(tok, micro_batch, smoke=False, seq_len=SEQ_LEN):
     # pack the token stream into seq_len blocks, then into batches
     buf = []
     stream = token_stream(tok, smoke=smoke)
+    first = True
     while True:
         while len(buf) < seq_len * micro_batch:
             try:
@@ -99,6 +104,9 @@ def batch_stream(tok, micro_batch, smoke=False, seq_len=SEQ_LEN):
         chunk = buf[: seq_len * micro_batch]
         buf = buf[seq_len * micro_batch:]
         x = torch.tensor(chunk, dtype=torch.long).view(micro_batch, seq_len)
+        if first:
+            print("first batch ready, starting training...", flush=True)
+            first = False
         yield x
 
 
@@ -215,8 +223,11 @@ def main():
     loss_sum = 0.0
     loss_n = 0
 
+    print("waiting for first batch, this can take a few minutes on first run...", flush=True)
     while step < total_steps:
         x = next(stream).to(device)
+        if micro == 0 and step == 0:
+            print("first batch in, running first forward/backward...", flush=True)
         with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_bf16):
             out = model(x, labels=x)
             loss = out.loss / args.grad_accum
@@ -232,7 +243,7 @@ def main():
             sched.step()
             opt.zero_grad(set_to_none=True)
             step += 1
-            if step % args.log_every == 0:
+            if step <= 20 or step % args.log_every == 0:
                 el = time.time() - t0
                 tok_s = tokens_seen / max(el, 1)
                 print(f"step {step}/{total_steps} loss {loss_sum / max(loss_n, 1):.4f} "
