@@ -1,0 +1,10 @@
+out-09b/
+out/
+*.gguf
+*.tmp.gguf
+llama.cpp/
+__pycache__/
+*.pyc
+hf_config_only/
+tokenizer.json
+/tmp/
