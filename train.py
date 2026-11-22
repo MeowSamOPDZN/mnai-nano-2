@@ -15,6 +15,9 @@ Usage, Colab T4:
   python train.py --tokenizer tokenizer.json --out out-09b --max-tokens 1000000000
   python train.py --tokenizer tokenizer.json --out out-09b --resume out-09b/ckpt-500
 
+Kaggle Save & Run All, 12h cap per run, so stop cleanly in time:
+  python train.py --tokenizer tokenizer.json --out /kaggle/working/out-09b --max-tokens 1000000000 --max-hours 10.5
+
 Smoke test on CPU, no data download. Uses a tiny twin of the same
 block layout for the loop test, full 0.9B forward is in model.py:
   python train.py --smoke --max-steps 3 --out /tmp/smoke-09b
@@ -54,6 +57,8 @@ def parse_args():
     p.add_argument("--seed", type=int, default=1337)
     p.add_argument("--ckpt-every", type=int, default=100)
     p.add_argument("--log-every", type=int, default=10)
+    p.add_argument("--max-hours", type=float, default=0,
+                   help="stop cleanly after this many hours, saving a checkpoint first, 0 = off")
     p.add_argument("--smoke", action="store_true")
     return p.parse_args()
 
@@ -262,6 +267,17 @@ def main():
                 with open(os.path.join(args.out, "train_log.jsonl"), "a") as f:
                     f.write(json.dumps({"step": step, "tokens_seen": tokens_seen,
                                         "time_s": time.time() - t0}) + "\n")
+            if args.max_hours and (time.time() - t0) > args.max_hours * 3600:
+                ckpt = os.path.join(args.out, f"ckpt-{step}")
+                if not os.path.exists(os.path.join(ckpt, "trainer_state.json")):
+                    print(f"time limit reached, saving {ckpt}", flush=True)
+                    if tok is not None:
+                        save_ckpt(model, tok, ckpt, step, tokens_seen)
+                    else:
+                        os.makedirs(ckpt, exist_ok=True)
+                        model.save_pretrained(ckpt)
+                print(f"stopping at step {step}, time limit {args.max_hours}h reached", flush=True)
+                break
             if args.smoke and step >= 3:
                 print("smoke done, 3 steps ran fine", flush=True)
                 break
