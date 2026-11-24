@@ -19,6 +19,16 @@ def run(cmd, cwd=None):
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
+def installed_version(pkg):
+    # fresh interpreter each call, so a pip install in this process
+    # is visible right away instead of reading stale metadata
+    out = subprocess.run(
+        [sys.executable, "-c",
+         f"from importlib.metadata import version; print(version({pkg!r}))"],
+        capture_output=True, text=True)
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True)
@@ -29,8 +39,21 @@ def main():
 
     if not os.path.isdir(args.llama_cpp):
         run(["git", "clone", "https://github.com/ggerganov/llama.cpp.git", args.llama_cpp])
+    # llama.cpp's own requirements pin transformers==4.57.6, and installing
+    # them would silently downgrade the transformers this run started with.
+    # That breaks checkpoints saved by transformers 5: their
+    # tokenizer_config.json says "TokenizersBackend", a class 4.x has never
+    # heard of, so the converter dies with "Tokenizer class TokenizersBackend
+    # does not exist". Remember the version and put it back afterwards.
+    tf_before = installed_version("transformers")
     run([sys.executable, "-m", "pip", "install", "-q", "-r",
          os.path.join(args.llama_cpp, "requirements.txt")])
+    tf_after = installed_version("transformers")
+    if tf_before and tf_after != tf_before:
+        print(f"llama.cpp requirements moved transformers "
+              f"{tf_before} -> {tf_after}, restoring {tf_before}", flush=True)
+        run([sys.executable, "-m", "pip", "install", "-q",
+             f"transformers=={tf_before}"])
 
     f16 = args.out + ".f16.tmp.gguf" if args.quantize.lower() != "f16" else args.out
     run([sys.executable, os.path.join(args.llama_cpp, "convert_hf_to_gguf.py"),
