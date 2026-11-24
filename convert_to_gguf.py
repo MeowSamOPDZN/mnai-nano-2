@@ -62,9 +62,12 @@ def main():
     if args.quantize.lower() != "f16":
         quant = os.path.join(args.llama_cpp, "llama-quantize")
         if not os.path.exists(quant):
+            # -j 2, not unbounded -j: the unity build files are huge and
+            # one cc1plus can eat several GB, so a free -j OOM-kills the
+            # build on a small box (proved on a 6GB VM, cc1plus killed)
             run(["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"],
                 cwd=args.llama_cpp)
-            run(["cmake", "--build", "build", "-j", "--target", "llama-quantize"],
+            run(["cmake", "--build", "build", "-j", "2", "--target", "llama-quantize"],
                 cwd=args.llama_cpp)
             quant = os.path.join(args.llama_cpp, "build", "bin", "llama-quantize")
         run([quant, f16, args.out, args.quantize.upper()])
