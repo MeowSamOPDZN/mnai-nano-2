@@ -11,7 +11,7 @@ Usage:
 import argparse
 import os
 
-from tokenizers import Tokenizer, models, pre_tokenizers, trainers
+from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 
 
 def iter_texts(num_docs, from_files=None):
@@ -49,8 +49,17 @@ def main():
     p.add_argument("--vocab-size", type=int, default=32768)
     args = p.parse_args()
 
-    tok = Tokenizer(models.BPE(unk_token="<|unk|>"))
+    # byte_fallback=True and a Sequence decoder are what llama.cpp's
+    # converter expects for a Llama HF tokenizer (see convert_to_gguf.py).
+    # Without them the converter rejects tokenizer.json outright: no
+    # decoder means it cannot tell BPE from anything else, and without
+    # byte fallback it refuses the file as "not a Llama BPE tokenizer".
+    tok = Tokenizer(models.BPE(unk_token="<|unk|>", byte_fallback=True))
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    tok.decoder = decoders.Sequence([
+        decoders.ByteFallback(),
+        decoders.ByteLevel(add_prefix_space=False),
+    ])
     trainer = trainers.BpeTrainer(
         vocab_size=args.vocab_size,
         special_tokens=["<|pad|>", "<|bos|>", "<|eos|>", "<|unk|>"],
